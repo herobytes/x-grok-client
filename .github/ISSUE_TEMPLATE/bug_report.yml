@@ -1,0 +1,27 @@
+name: Bug report
+description: Report a reproducible client problem using sanitized information.
+body:
+  - type: markdown
+    attributes:
+      value: Never include cookies, CSRF tokens, authenticated proxy URLs, or raw HTTP responses. Follow SECURITY.md for security-sensitive reports.
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include operating system, Python version, repository revision, and XClientTransaction version.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Provide commands and configuration with synthetic values only.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior
+      description: Include the sanitized error code and whether the failure occurs during an offline check or an online request.
+    validations:
+      required: true

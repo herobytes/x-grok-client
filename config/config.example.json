@@ -1,0 +1,5 @@
+{
+  "envFile": "credentials.env",
+  "provider": "x-web",
+  "model": "grok-4-auto"
+}
