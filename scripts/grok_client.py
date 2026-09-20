@@ -39,6 +39,18 @@ PROMPT = (
     '"tags": ["topic or sentiment tag"]}. '
     "Write the field values in English. Do not include any other text."
 )
+COOKIE_SETUP_HELP = """Get your X Cookie in Chrome or Edge:
+1. Open https://x.com and sign in to your own account.
+2. Open Developer Tools (Mac: Cmd+Option+I; Windows/Linux: Ctrl+Shift+I).
+3. Select Network, reload the page, and select a request to x.com/i/api/.
+4. Under Headers > Request Headers, copy only the Cookie header value.
+   It must include auth_token and ct0. If absent, select another logged-in request.
+5. Paste the value into the hidden terminal prompt below and press Enter.
+
+Do not include the Cookie: prefix, copy a response Set-Cookie header, or use Copy as cURL.
+Console document.cookie cannot read HttpOnly cookies such as auth_token.
+Keep the cookie private; do not paste it into chat, issues, or command arguments.
+"""
 
 
 class GrokError(Exception):
@@ -96,7 +108,9 @@ def load_config(path: str | Path | None = None) -> Config:
     try:
         data = json.loads(config_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        raise ConfigError("Cannot read config.json; check the path and JSON format.") from None
+        raise ConfigError(
+            "Cannot read config.json; run init for first-time setup, or check the path and JSON format."
+        ) from None
     if not isinstance(data, dict) or set(data) != {"envFile", "provider", "model"}:
         raise ConfigError("config.json must contain exactly envFile, provider, and model.")
     if data["provider"] != "x-web":
@@ -284,6 +298,13 @@ def initialize(config_path: str | Path | None, *, cookie_stdin=False, replace_co
             raise ConfigError(
                 "Run init in a local interactive terminal for hidden cookie input, or pipe a trusted program into --cookie-stdin."
             )
+        print(
+            "Cookie setup is required after installing dependencies.\n"
+            "init will create missing files and save your cookie; no manual file creation is needed.\n"
+            f"Configuration file: {path}\n"
+            f"Credentials file: {config.env_file}\n\n" + COOKIE_SETUP_HELP,
+            file=sys.stderr,
+        )
         with warnings.catch_warnings():
             warnings.simplefilter("error", getpass.GetPassWarning)
             try:
@@ -327,6 +348,13 @@ def initialize(config_path: str | Path | None, *, cookie_stdin=False, replace_co
         raise CredentialWriteError(
             "Initialization could not write files; check directory permissions and disk space, then run init again."
         ) from None
+    if not cookie_stdin:
+        print(
+            f"Cookie saved to {config.env_file}.\n"
+            "Next, run check with the same configuration to validate local setup.\n"
+            "This setup did not test online authentication or Grok access.",
+            file=sys.stderr,
+        )
     return {
         "ok": True,
         "cookie_configured": True,

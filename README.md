@@ -24,14 +24,41 @@ Python **3.10 or newer** is required. The commands below target macOS and Linux.
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
+```
+
+**Cookie setup is required after installation.** Installing dependencies does not create your credentials file. Run the setup command in your own interactive terminal:
+
+```bash
 .venv/bin/python scripts/grok_client.py init
+```
+
+`init` shows instructions and the destination paths, then asks for your cookie with input hidden. Once you submit a valid cookie, it automatically creates `~/.config/x-grok-client/config.json` and `~/.config/x-grok-client/credentials.env`. **You do not need to create or edit these files manually.**
+
+### Get your X Cookie
+
+In Chrome or Edge:
+
+1. Open [x.com](https://x.com) and sign in to your own account.
+2. Open Developer Tools: **Cmd+Option+I** on macOS or **Ctrl+Shift+I** on Windows/Linux.
+3. Select **Network**, then reload the page so requests appear.
+4. Select a request whose URL starts with `https://x.com/i/api/`. You can filter the list by `i/api`.
+5. Open **Headers → Request Headers** and find **Cookie** (or `cookie`). Copy only its value, without the `Cookie:` prefix. It must include both `auth_token=...` and `ct0=...`; if either is missing, select another logged-in request.
+6. Paste that value into the terminal's hidden `init` prompt and press **Enter**. No characters appearing while you paste is normal.
+
+Copy the **request Cookie value**, not a response `Set-Cookie` header, all headers, or **Copy as cURL**. Keep it on one line. Never paste it into an issue, chat, or command-line argument.
+
+**Can a Console one-liner get the cookie?** `document.cookie` (including `copy(document.cookie)` in Chrome DevTools) cannot read **HttpOnly** cookies. X's `auth_token` is an HttpOnly login cookie, so the result is incomplete for this client. Use the Network steps above; a page-level JavaScript snippet cannot bypass HttpOnly.
+
+### Verify setup
+
+After `init` confirms that the cookie was saved:
+
+```bash
 .venv/bin/python scripts/grok_client.py check
 .venv/bin/python scripts/grok_client.py ask --prompt "Explain how a solar eclipse works."
 ```
 
-Run `init` in your own interactive terminal. It asks for your X **Cookie request-header value** with input hidden. Use the value from a request to `x.com` in your logged-in browser's developer tools, without the `Cookie:` prefix. It must include `auth_token` and `ct0`. Never paste it into an issue, chat, or command-line argument.
-
-By default, `init` creates `~/.config/x-grok-client/config.json` and `credentials.env`. The `check` command validates local configuration and dependencies only; it does **not** verify online authentication or Grok access.
+The `check` command validates local configuration and dependencies only; it does **not** verify online authentication or Grok access. `ask` sends an actual request. For a custom credentials location or replacing an expired cookie, see the [configuration guide](references/configuration.md#first-login).
 
 Before the first `ask` or `describe` of the day, the CLI may download, validate, and update **XClientTransaction** inside a managed virtual environment. This can add startup time and make anonymous requests to X. See [dependency maintenance](references/dependency-maintenance.md) for the exact scope and failure behavior.
 

@@ -20,7 +20,13 @@ Only `provider=x-web` is supported.
    `~/.config/x-grok-client/config.json`; select a different file with `--config`
    before the command. A relative `envFile` is relative to its configuration file.
 3. For first login, have the user run `init` in their own terminal and enter the
-   cookie through its hidden prompt. Do not request cookies in chat or pass them
+   cookie through its hidden prompt. Explain that installing dependencies does
+   not create credentials: `init` creates the configuration and cookie file after
+   valid input, so manual file creation is unnecessary. Show the user how to get
+   the cookie: sign in to X, open Developer Tools Network, reload, select an
+   `x.com/i/api/` request, and copy Headers > Request Headers > Cookie (value only,
+   including `auth_token` and `ct0`). Do not recommend Console `document.cookie`;
+   it cannot read HttpOnly login cookies. Do not request cookies in chat or pass them
    as command-line arguments. Replacing a configured cookie requires
    `init --replace-cookie`. Run `check` afterward; it validates local files and
    dependencies, not online authentication or Grok access. Do not read or print

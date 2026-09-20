@@ -30,16 +30,30 @@ change. XClientTransaction has a separate
 
 ## First login
 
-Run this in your own interactive terminal:
+Installing dependencies does not create a cookie file or sign you in. Run `init`
+in your own interactive terminal to create it automatically:
 
 ```bash
 .venv/bin/python scripts/grok_client.py init
 ```
 
-The hidden prompt accepts the full **Cookie request-header value** from a request
-to `x.com` in your logged-in browser's developer tools. Omit the `Cookie:` prefix.
-Keep the value on one line, including non-empty `auth_token` and `ct0` entries.
-Do not use a response's `Set-Cookie` attributes.
+The command displays the target configuration and credentials paths before asking
+for hidden input. By default, they are `~/.config/x-grok-client/config.json` and
+`~/.config/x-grok-client/credentials.env`. There is no need to create either file
+manually. An existing configuration's `envFile` determines the credentials path.
+
+Follow the [browser instructions in the README](../README.md#get-your-x-cookie):
+sign in to X, open Developer Tools **Network**, reload, select a request to
+`https://x.com/i/api/`, and copy **Headers → Request Headers → Cookie**. Paste
+only the value into `init` and press Enter; hidden input does not echo characters.
+The value must be one line and include non-empty `auth_token` and `ct0` entries.
+Do not include the `Cookie:` prefix or use a response's `Set-Cookie` attributes,
+all headers, or a copied cURL command. If no Cookie header appears, select another
+request made while signed in.
+
+Console JavaScript such as `document.cookie` or `copy(document.cookie)` cannot
+read HttpOnly cookies, including X's `auth_token`. It cannot supply the complete
+login cookie required here; use the request header instead.
 
 `init` creates configuration and credentials automatically. New files use mode
 `0600`; newly created leaf directories use mode `0700` on POSIX systems. Existing
@@ -50,6 +64,12 @@ is not replaced unless you explicitly run:
 ```bash
 .venv/bin/python scripts/grok_client.py init --replace-cookie
 ```
+
+After the cookie is saved, run `check` with the same `--config` selection to
+validate local setup. `init` and `check` do not verify online authentication.
+Invalid input is rejected before creating the configuration or credentials files.
+Interactive instructions go to stderr; the success result remains JSON on stdout.
+`--cookie-stdin` omits the interactive instructions for scripted use.
 
 A trusted local program can pipe a cookie into `init --cookie-stdin`. Do not use
 literal credentials in `echo`, shell arguments, heredocs, or recorded tool calls.
