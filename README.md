@@ -122,7 +122,9 @@ Only example configuration files belong in Git. Actual credentials, local config
 .venv/bin/python -m pip check
 ```
 
-Run these checks locally before contributing. They require no X credentials or authenticated requests. This repository does not include a regression test suite or a GitHub Actions workflow; local checks validate code quality, not complete runtime behavior.
+Run these checks locally before contributing. They require no X credentials or authenticated requests. This repository does not include a regression test suite; local checks validate code quality, not complete runtime behavior.
+
+Dependabot checks only XClientTransaction every day at 09:00 Asia/Shanghai. A dedicated GitHub Actions workflow automatically squash-merges its single-package stable version updates, including major versions. It verifies the PR author and exact changed dependency line without executing PR code. This is an automatic update policy, not a compatibility test; conflicts or branch protection requirements can stop a merge. See [dependency maintenance](references/dependency-maintenance.md).
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidance and [SECURITY.md](SECURITY.md) for credential handling and vulnerability reporting. Protocol details live in [connection flow](references/connection-flow.md).
 
