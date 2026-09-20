@@ -4,5 +4,5 @@ python-dotenv>=1.2.3,<2
 XClientTransaction>=1.0.3
 beautifulsoup4>=4.12,<5
 requests[socks]>=2.34.2,<3
-filelock>=3.16,<4
+filelock>=4.0.0,<5
 packaging>=26.3
