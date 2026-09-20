@@ -19,18 +19,25 @@ Only `provider=x-web` is supported.
    the interpreter and script. The default configuration is
    `~/.config/x-grok-client/config.json`; select a different file with `--config`
    before the command. A relative `envFile` is relative to its configuration file.
-3. For first login, have the user run `init` in their own terminal and enter the
-   cookie through its hidden prompt. Explain that installing dependencies does
-   not create credentials: `init` creates the configuration and cookie file after
-   valid input, so manual file creation is unnecessary. Show the user how to get
-   the cookie: sign in to X, open Developer Tools Network, reload, select an
-   `x.com/i/api/` request, and copy Headers > Request Headers > Cookie (value only,
-   including `auth_token` and `ct0`). Do not recommend Console `document.cookie`;
-   it cannot read HttpOnly login cookies. Do not request cookies in chat or pass them
-   as command-line arguments. Replacing a configured cookie requires
-   `init --replace-cookie`. Run `check` afterward; it validates local files and
-   dependencies, not online authentication or Grok access. Do not read or print
-   the credentials file to inspect login state; the script reads it internally.
+3. During first-time installation, ask the user where their Cookie dotenv file
+   is stored. Ask for the path only, never the Cookie value. Continue independent
+   installation work while waiting. Do not choose a Cookie location, generate a
+   default `envFile`, or create credentials without a user-selected path. If the
+   user does not answer or leaves it blank, finish installation and include
+   [manual file creation instructions](references/configuration.md#finish-cookie-setup-later)
+   in the final response. State that Cookie setup remains incomplete; do not run
+   authenticated requests or claim that login is configured.
+   When a path is provided, use `init --env-file <user-selected-path>` to link an
+   existing dotenv file. For a new or empty file, have the user run this command
+   in their own terminal for hidden Cookie input. Existing configured `envFile`
+   values represent a previous choice and can be reused without asking again.
+   Explain how to get the Cookie: sign in to X, open Developer Tools Network,
+   reload, select an `x.com/i/api/` request, and copy Headers > Request Headers >
+   Cookie (value only, including `auth_token` and `ct0`). Console `document.cookie`
+   cannot read HttpOnly login cookies. Never pass Cookie values as command-line
+   arguments or read and print the credentials file. Replacing an existing Cookie
+   requires `init --replace-cookie`. Run `check` only after setup completes; it
+   validates local files and dependencies, not online authentication or Grok access.
 4. Use `ask` for questions or `describe` for an explicit X post URL. `ask` creates
    a retained conversation unless a previous `conversation_id` is provided. The
    client does not post or reply. In a dedicated environment, the CLI checks

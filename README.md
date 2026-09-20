@@ -26,13 +26,23 @@ python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 ```
 
-**Cookie setup is required after installation.** Installing dependencies does not create your credentials file. Run the setup command in your own interactive terminal:
+**Choose your Cookie file after installation.** Installing dependencies does not create a credentials file. Run the setup command in your own interactive terminal:
 
 ```bash
 .venv/bin/python scripts/grok_client.py init
 ```
 
-`init` shows instructions and the destination paths, then asks for your cookie with input hidden. Once you submit a valid cookie, it automatically creates `~/.config/x-grok-client/config.json` and `~/.config/x-grok-client/credentials.env`. **You do not need to create or edit these files manually.**
+`init` first asks **where your Cookie dotenv file is**. Enter an existing file or a new file path of your choice. There is **no default Cookie file location**. An existing valid file is linked without rewriting it; for a new or empty file, `init` offers hidden Cookie input and saves it only at your chosen path. A path already recorded in `envFile` is reused.
+
+**Leave the path blank to finish setup later.** No configuration or credentials are created or changed. The command ends with instructions for obtaining a Cookie and creating your own file; its JSON result reports `status: "setup_deferred"` and `cookie_configured: false`.
+
+If you already know the path, specify it directly (replace the example with your chosen location):
+
+```bash
+.venv/bin/python scripts/grok_client.py init --env-file /absolute/path/you/choose/cookies.env
+```
+
+`--config` selects the JSON configuration file and defaults to `~/.config/x-grok-client/config.json`. It does **not** choose a Cookie file for you. Relative Cookie paths are resolved from the configuration directory. For manual creation, see [finish Cookie setup later](references/configuration.md#finish-cookie-setup-later).
 
 ### Get your X Cookie
 
@@ -43,7 +53,7 @@ In Chrome or Edge:
 3. Select **Network**, then reload the page so requests appear.
 4. Select a request whose URL starts with `https://x.com/i/api/`. You can filter the list by `i/api`.
 5. Open **Headers → Request Headers** and find **Cookie** (or `cookie`). Copy only its value, without the `Cookie:` prefix. It must include both `auth_token=...` and `ct0=...`; if either is missing, select another logged-in request.
-6. Paste that value into the terminal's hidden `init` prompt and press **Enter**. No characters appearing while you paste is normal.
+6. After choosing your Cookie file path, paste that value into the terminal's hidden `init` prompt and press **Enter**. No characters appearing while you paste is normal. If you deferred setup, save it in your own local dotenv file as described in the [configuration guide](references/configuration.md#finish-cookie-setup-later).
 
 Copy the **request Cookie value**, not a response `Set-Cookie` header, all headers, or **Copy as cURL**. Keep it on one line. Never paste it into an issue, chat, or command-line argument.
 
@@ -51,7 +61,7 @@ Copy the **request Cookie value**, not a response `Set-Cookie` header, all heade
 
 ### Verify setup
 
-After `init` confirms that the cookie was saved:
+After `init` confirms that the Cookie file was configured (`cookie_configured: true`):
 
 ```bash
 .venv/bin/python scripts/grok_client.py check
@@ -109,13 +119,13 @@ The configuration contains exactly three fields:
 
 ```json
 {
-  "envFile": "credentials.env",
+  "envFile": "/absolute/path/you/choose/cookies.env",
   "provider": "x-web",
   "model": "grok-4-auto"
 }
 ```
 
-`envFile` is resolved relative to the configuration file, not your working directory. `model` is an X web `grokModelOptionId`, not an official xAI API model name. The client does not silently change models or accounts.
+Replace the illustrative `envFile` value with your own Cookie file. Relative paths are resolved from the configuration file, not your working directory. The example configuration template leaves `envFile` empty so you must choose it explicitly. `model` is an X web `grokModelOptionId`, not an official xAI API model name. The client does not silently change models or accounts.
 
 To keep configuration inside your checkout instead, pass `--config` **before** the command:
 
@@ -123,6 +133,8 @@ To keep configuration inside your checkout instead, pass `--config` **before** t
 .venv/bin/python scripts/grok_client.py --config config/config.json init
 .venv/bin/python scripts/grok_client.py --config config/config.json check
 ```
+
+On first setup, `init` still asks for your Cookie file path. It never derives a credentials filename from the `--config` directory.
 
 Only example configuration files belong in Git. Actual credentials, local configuration, virtual environments, caches, and maintenance state are ignored. For proxies, persistent skill installation, and cookie handling, see the [configuration guide](references/configuration.md).
 

@@ -2,8 +2,10 @@
 
 ## Credentials
 
-An X session cookie is a login credential. Enter it only through the local `init`
-prompt or a trusted pipe into `init --cookie-stdin`. Do not put it in shell
+An X session cookie is a login credential. Choose its file location yourself.
+Enter the value through the local `init` prompt, a trusted pipe into
+`init --cookie-stdin`, or a local editor when creating your chosen dotenv file.
+Do not put it in shell
 arguments, issues, pull requests, screenshots, or chat messages.
 
 The credentials file is plaintext. New files use owner-only permissions on POSIX

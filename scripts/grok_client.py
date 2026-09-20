@@ -274,58 +274,126 @@ class CookieStore:
             ) from None
 
 
-def initialize(config_path: str | Path | None, *, cookie_stdin=False, replace_cookie=False) -> dict:
-    """Local first-run setup. No cookies in arguments, tool output or chat prompts."""
+def defer_setup() -> dict:
+    """Leave files untouched and explain how to finish setup later."""
+    print(
+        "Cookie setup deferred; no files were created or changed.\n"
+        "When ready:\n"
+        "1. Choose a private location for your cookie file; there is no default.\n"
+        "2. Run init --env-file /absolute/path/you/choose/cookies.env.\n"
+        "   init can use an existing dotenv file or help create one at that location.\n"
+        "3. To create it manually, use a local editor to save these dotenv entries:\n"
+        "   X_COOKIE='PASTE_YOUR_COOKIE_HERE'\n"
+        "   X_PROXY=''\n"
+        "   On macOS/Linux, restrict the file permissions to 0600.\n"
+        "4. Run init --env-file with that path to link the file, then run check.\n"
+        "   Keep the same --config selection for each command.\n\n"
+        + COOKIE_SETUP_HELP.replace(
+            "Paste the value into the hidden terminal prompt below and press Enter.",
+            "Save the value locally, or paste it into the hidden prompt when you run init later.",
+        ),
+        file=sys.stderr,
+    )
+    return {
+        "ok": True,
+        "status": "setup_deferred",
+        "cookie_configured": False,
+        "network_checked": False,
+    }
+
+
+def initialize(
+    config_path: str | Path | None,
+    *,
+    env_file: str | Path | None = None,
+    cookie_stdin=False,
+    replace_cookie=False,
+) -> dict:
+    """Use a user-selected cookie file; never choose its location implicitly."""
     from filelock import FileLock, Timeout
 
     path = Path(config_path).expanduser().resolve() if config_path else DEFAULT_CONFIG
     existing_config = path.read_text(encoding="utf-8") if path.exists() else None
-    config = (
-        load_config(path)
-        if existing_config is not None
-        else Config(path.parent / "credentials.env", "x-web", "grok-4-auto")
-    )
-    existing_env = read_env_text(config.env_file) if config.env_file.exists() else None
-    values = parse_env(existing_env or "")
-    if values.get("X_COOKIE") and not replace_cookie:
-        raise ConfigError(
-            "A cookie is already configured; use init --replace-cookie to log in again or switch accounts."
-        )
-    if cookie_stdin:
-        cookie = sys.stdin.read(64002).removesuffix("\n").removesuffix("\r")
-    else:
-        if not sys.stdin.isatty():
-            raise ConfigError(
-                "Run init in a local interactive terminal for hidden cookie input, or pipe a trusted program into --cookie-stdin."
-            )
+    config = load_config(path) if existing_config is not None else None
+    if env_file is None and config is not None:
+        env_file = config.env_file
+    if env_file is None:
+        if cookie_stdin or not sys.stdin.isatty():
+            return defer_setup()
         print(
-            "Cookie setup is required after installing dependencies.\n"
-            "init will create missing files and save your cookie; no manual file creation is needed.\n"
+            "Where is your Cookie dotenv file? Enter an existing file or a path you choose.\n"
+            "Relative paths are resolved from the configuration directory.\n"
             f"Configuration file: {path}\n"
-            f"Credentials file: {config.env_file}\n\n" + COOKIE_SETUP_HELP,
+            "Cookie file path (leave blank to finish setup later): ",
+            end="",
             file=sys.stderr,
+            flush=True,
         )
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", getpass.GetPassWarning)
-            try:
-                cookie = getpass.getpass("Paste your X Cookie (input hidden): ")
-            except (getpass.GetPassWarning, EOFError):
-                raise ConfigError(
-                    "The terminal cannot hide input; initialization was cancelled without writing credentials."
-                ) from None
-    parse_cookie(cookie)
-    updated = with_cookie(existing_env if existing_env is not None else "X_PROXY=''\n", cookie)
-    # Validate preserved proxy as well before writing anything.
-    parse_credentials(updated)
+        try:
+            env_file = input().strip()
+        except EOFError:
+            return defer_setup()
+    if not str(env_file).strip():
+        return defer_setup()
+    selected = Path(env_file).expanduser()
+    if not selected.is_absolute():
+        selected = path.parent / selected
+    selected = selected.resolve()
+    if selected == path:
+        raise ConfigError("The cookie file and configuration file must have different paths.")
+    if config is not None and config.env_file != selected:
+        raise ConfigError(
+            "--env-file differs from the configured envFile; choose another --config file "
+            "or explicitly edit envFile in the existing configuration."
+        )
+    config = config or Config(selected, "x-web", "grok-4-auto")
+    existing_env = read_env_text(selected) if selected.exists() else None
+    values = parse_env(existing_env or "")
+    reuse_cookie = bool(values.get("X_COOKIE")) and not replace_cookie
+    if reuse_cookie:
+        if cookie_stdin:
+            raise ConfigError(
+                "A cookie is already configured; use init --replace-cookie to replace it."
+            )
+        parse_credentials(existing_env)
+        updated = existing_env
+    else:
+        if cookie_stdin:
+            cookie = sys.stdin.read(64002).removesuffix("\n").removesuffix("\r")
+        else:
+            if not sys.stdin.isatty():
+                return defer_setup()
+            print(
+                f"Configuration file: {path}\n"
+                f"Your selected Cookie file: {selected}\n\n" + COOKIE_SETUP_HELP,
+                file=sys.stderr,
+            )
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", getpass.GetPassWarning)
+                try:
+                    cookie = getpass.getpass("Paste your X Cookie (input hidden): ")
+                except EOFError:
+                    return defer_setup()
+                except getpass.GetPassWarning:
+                    raise ConfigError(
+                        "The terminal cannot hide input; initialization was cancelled "
+                        "without writing credentials."
+                    ) from None
+            if not cookie.strip():
+                return defer_setup()
+        parse_cookie(cookie)
+        updated = with_cookie(existing_env if existing_env is not None else "X_PROXY=''\n", cookie)
+        # Validate preserved proxy as well before writing anything.
+        parse_credentials(updated)
     try:
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        config.env_file.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        selected.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         with (
             FileLock(str(path) + ".lock", timeout=0, mode=0o600),
-            FileLock(str(config.env_file) + ".lock", timeout=0, mode=0o600),
+            FileLock(str(selected) + ".lock", timeout=0, mode=0o600),
         ):
             latest_config = path.read_text(encoding="utf-8") if path.exists() else None
-            latest_env = read_env_text(config.env_file) if config.env_file.exists() else None
+            latest_env = read_env_text(selected) if selected.exists() else None
             if latest_config != existing_config or latest_env != existing_env:
                 raise CredentialChangedError(
                     "Configuration changed during initialization; nothing was overwritten. Run init again."
@@ -334,12 +402,17 @@ def initialize(config_path: str | Path | None, *, cookie_stdin=False, replace_co
                 atomic_write(
                     path,
                     json.dumps(
-                        {"envFile": "credentials.env", "provider": "x-web", "model": "grok-4-auto"},
+                        {
+                            "envFile": str(selected),
+                            "provider": config.provider,
+                            "model": config.model,
+                        },
                         indent=2,
                     )
                     + "\n",
                 )
-            atomic_write(config.env_file, updated)
+            if not reuse_cookie:
+                atomic_write(selected, updated)
     except Timeout:
         raise CredentialWriteError(
             "Another process is writing configuration; initialization stopped."
@@ -349,14 +422,16 @@ def initialize(config_path: str | Path | None, *, cookie_stdin=False, replace_co
             "Initialization could not write files; check directory permissions and disk space, then run init again."
         ) from None
     if not cookie_stdin:
+        action = "Using existing Cookie file" if reuse_cookie else "Cookie saved to"
         print(
-            f"Cookie saved to {config.env_file}.\n"
+            f"{action}: {selected}.\n"
             "Next, run check with the same configuration to validate local setup.\n"
             "This setup did not test online authentication or Grok access.",
             file=sys.stderr,
         )
     return {
         "ok": True,
+        "status": "configured",
         "cookie_configured": True,
         "cookie_persistence": "env_file",
         "network_checked": False,
@@ -716,8 +791,10 @@ def main() -> int:
         "--config", help="Config JSON path; default ~/.config/x-grok-client/config.json"
     )
     commands = parser.add_subparsers(dest="command", required=True)
-    setup = commands.add_parser(
-        "init", help="Initialize local files using hidden Cookie input; no network calls"
+    setup = commands.add_parser("init", help="Choose or link your Cookie file; no network calls")
+    setup.add_argument(
+        "--env-file",
+        help="Your chosen Cookie dotenv path; relative to the config directory, no default",
     )
     setup.add_argument(
         "--cookie-stdin",
@@ -752,6 +829,7 @@ def main() -> int:
                 json.dumps(
                     initialize(
                         args.config,
+                        env_file=args.env_file,
                         cookie_stdin=args.cookie_stdin,
                         replace_cookie=args.replace_cookie,
                     ),
