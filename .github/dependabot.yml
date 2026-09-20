@@ -3,5 +3,9 @@ updates:
   - package-ecosystem: pip
     directory: /
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
+      interval: cron
+      cronjob: "0 9 * * *"
+      timezone: Asia/Shanghai
+    allow:
+      - dependency-name: xclienttransaction
+    open-pull-requests-limit: 1
