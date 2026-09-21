@@ -8,6 +8,7 @@ import getpass
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import time
@@ -19,8 +20,8 @@ from http.cookies import CookieError, SimpleCookie
 from importlib import import_module
 from io import StringIO
 from pathlib import Path
+from urllib import request as urllib_request
 from urllib.parse import urlsplit
-from urllib.request import getproxies
 
 DEFAULT_CONFIG = Path.home() / ".config/x-grok-client/config.json"
 CALL_TIMEOUT_SECONDS = 180
@@ -208,6 +209,8 @@ def load_credentials(config: Config) -> Credentials:
 class ProxyDetection:
     proxy: str | None = field(default=None, repr=False)
     status: str = "not_detected"
+    source: str = "unknown"
+    reason: str | None = None
 
     def public(self) -> dict:
         address = None
@@ -219,19 +222,23 @@ class ProxyDetection:
             port = f":{parsed.port}" if parsed.port is not None else ""
             credentials = "<credentials>@" if parsed.username is not None else ""
             address = f"{parsed.scheme}://{credentials}{host}{port}"
-        return {"status": self.status, "detected": bool(self.proxy), "proxy": address}
+        return {
+            "status": self.status,
+            "detected": bool(self.proxy),
+            "proxy": address,
+            "source": self.source,
+            "reason": self.reason,
+        }
 
 
-def detect_system_proxy() -> ProxyDetection:
-    """Read OS/environment proxy settings locally; never test or apply them."""
-    try:
-        proxies = getproxies()
-    except Exception:
-        return ProxyDetection(status="detection_unavailable")
-    # Both X endpoints use HTTPS. macOS and Windows settings are read by urllib
-    # when environment proxies are absent; Linux uses proxy environment variables.
+def proxy_from_settings(proxies: dict, source: str) -> ProxyDetection:
+    """Normalize supported static proxies without exposing their credentials."""
+    invalid = False
     for key in ("https", "all", "http", "socks"):
         value = proxies.get(key)
+        if not value:
+            continue
+        invalid = True
         if not isinstance(value, str) or not value.strip():
             continue
         value = value.strip()
@@ -246,8 +253,84 @@ def detect_system_proxy() -> ProxyDetection:
         except ConfigError:
             continue
         if proxy:
-            return ProxyDetection(proxy, "detected")
-    return ProxyDetection()
+            return ProxyDetection(proxy, "detected", source)
+    if invalid:
+        return ProxyDetection(
+            status="detection_unavailable", source=source, reason="unsupported_proxy_settings"
+        )
+    return ProxyDetection(source=source)
+
+
+def detect_system_proxy() -> ProxyDetection:
+    """Inspect environment and native settings; empty macOS output is inconclusive."""
+    source = "environment"
+    try:
+        environment = proxy_from_settings(urllib_request.getproxies_environment(), source)
+        if environment.status != "not_detected":
+            return environment
+        # NO_PROXY alone must not suppress discovery of the native system proxy.
+        if sys.platform == "darwin":
+            source = "macos_system"
+            result = subprocess.run(
+                ["/usr/sbin/scutil", "--proxy"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode != 0:
+                raise OSError()
+            fields = dict(
+                re.findall(
+                    r"^\s*(HTTPSEnable|HTTPSProxy|HTTPSPort|HTTPEnable|HTTPProxy|HTTPPort|"
+                    r"SOCKSEnable|SOCKSProxy|SOCKSPort|ProxyAutoConfigEnable|ProxyAutoDiscoveryEnable)"
+                    r"\s*:\s*(.*?)\s*$",
+                    result.stdout,
+                    re.MULTILINE,
+                )
+            )
+            flags = {key: value for key, value in fields.items() if key.endswith("Enable")}
+            if not flags or any(value not in {"0", "1"} for value in flags.values()):
+                return ProxyDetection(
+                    status="detection_unavailable",
+                    source=source,
+                    reason="system_settings_unreadable",
+                )
+            proxies = {}
+            for prefix, key in (("HTTPS", "https"), ("HTTP", "http"), ("SOCKS", "socks")):
+                if fields.get(prefix + "Enable") != "1":
+                    continue
+                host, port = fields.get(prefix + "Proxy", ""), fields.get(prefix + "Port", "")
+                if not host or not port.isdigit() or not 1 <= int(port) <= 65535:
+                    return ProxyDetection(
+                        status="detection_unavailable",
+                        source=source,
+                        reason="unsupported_proxy_settings",
+                    )
+                if ":" in host and not host.startswith("["):
+                    host = f"[{host}]"
+                scheme = "socks5h" if key == "socks" else "http"
+                proxies[key] = f"{scheme}://{host}:{port}"
+            native = proxy_from_settings(proxies, source)
+            if native.status != "not_detected":
+                return native
+            if any(
+                fields.get(key) == "1"
+                for key in ("ProxyAutoConfigEnable", "ProxyAutoDiscoveryEnable")
+            ):
+                return ProxyDetection(
+                    status="detection_unavailable",
+                    source=source,
+                    reason="automatic_proxy_requires_manual_configuration",
+                )
+            return native
+        if sys.platform == "win32":
+            source = "windows_system"
+            return proxy_from_settings(urllib_request.getproxies_registry(), source)
+        return environment
+    except Exception:
+        return ProxyDetection(
+            status="detection_unavailable", source=source, reason="system_settings_unreadable"
+        )
 
 
 def with_env_value(content: str, key: str, value: str) -> str:
@@ -308,7 +391,7 @@ def configure_proxy(
             answer = ""
         if answer in {"y", "yes"}:
             return with_env_value(content, "X_PROXY", detection.proxy), "applied"
-    return content, "skipped"
+    return content, "skipped" if interactive or skip_proxy else "confirmation_required"
 
 
 def setup_file_guide(detection: ProxyDetection, proxy_status: str) -> None:
@@ -317,25 +400,28 @@ def setup_file_guide(detection: ProxyDetection, proxy_status: str) -> None:
         print("The confirmed system proxy was saved in X_PROXY.", file=sys.stderr)
     elif proxy_status == "existing":
         print("The existing X_PROXY setting was preserved.", file=sys.stderr)
-    elif proxy_status == "skipped" and detection.proxy:
+    elif proxy_status in {"skipped", "confirmation_required"} and detection.proxy:
         print(
             f"System proxy detected: {detection.public()['proxy']}. It was not applied.\n"
-            "To apply it later, run init --use-system-proxy with your chosen --env-file\n"
+            "Your explicit confirmation is required before applying it.\n"
+            "To apply it, run init --use-system-proxy with your chosen --env-file\n"
             "or existing --config. Alternatively, edit X_PROXY in your Cookie file.\n"
             "An empty X_PROXY uses a direct connection, which may fail on your network.",
             file=sys.stderr,
         )
     elif proxy_status == "detection_unavailable":
         print(
-            "System proxy detection was unavailable; configure X_PROXY manually if needed.",
+            "System proxy settings could not be reliably read; this does not mean no proxy exists. "
+            "Run detect-proxy in your own terminal to check, or provide the proxy address manually.",
             file=sys.stderr,
         )
     print(
         "\nCookie file format (UTF-8 dotenv, one variable per line; examples only):\n"
-        "X_COOKIE='auth_token=YOUR_AUTH_TOKEN; ct0=YOUR_CT0; other_cookie=value'\n"
+        "X_COOKIE='your-cookies...'\n"
         "X_PROXY=''\n\n"
         "X_COOKIE: required, full Cookie request-header value on one line; auth_token and ct0\n"
-        "must be present. Do not include the Cookie: prefix.\n"
+        "are validation checks only, not a two-cookie template. Keep EVERY cookie pair from the\n"
+        "copied header; do not extract just those two keys. Do not include the Cookie: prefix.\n"
         "X_PROXY: optional proxy URL; empty means direct. For example:\n"
         "X_PROXY='http://127.0.0.1:10808'\n"
         "Use your actual proxy address and port; this example is not a default.\n"
@@ -400,7 +486,7 @@ class CookieStore:
             ) from None
 
 
-def defer_setup(detection: ProxyDetection) -> dict:
+def defer_setup(detection: ProxyDetection, *, skip_proxy=False) -> dict:
     """Leave files untouched and explain how to finish setup later."""
     print(
         "Cookie setup deferred; no files were created or changed.\n"
@@ -409,7 +495,7 @@ def defer_setup(detection: ProxyDetection) -> dict:
         "2. Run init --env-file /absolute/path/you/choose/cookies.env.\n"
         "   init can use an existing dotenv file or help create one at that location.\n"
         "3. To create it manually, use a local editor to save these dotenv entries:\n"
-        "   X_COOKIE='PASTE_YOUR_COOKIE_HERE'\n"
+        "   X_COOKIE='your-cookies...'\n"
         "   X_PROXY=''\n"
         "   On macOS/Linux, restrict the file permissions to 0600.\n"
         "4. Run init --env-file with that path to link the file, then run check.\n"
@@ -420,13 +506,18 @@ def defer_setup(detection: ProxyDetection) -> dict:
         ),
         file=sys.stderr,
     )
-    proxy_status = "skipped" if detection.proxy else detection.status
+    proxy_status = (
+        ("skipped" if skip_proxy else "confirmation_required")
+        if detection.proxy
+        else detection.status
+    )
     setup_file_guide(detection, proxy_status)
     return {
         "ok": True,
         "status": "setup_deferred",
         "cookie_configured": False,
         "proxy_setup": proxy_status,
+        "proxy_detection": detection.public(),
         "network_checked": False,
     }
 
@@ -451,7 +542,7 @@ def initialize(
         env_file = config.env_file
     if env_file is None:
         if cookie_stdin or not sys.stdin.isatty():
-            return defer_setup(detection)
+            return defer_setup(detection, skip_proxy=skip_proxy)
         print(
             "Where is your Cookie dotenv file? Enter an existing file or a path you choose.\n"
             "Relative paths are resolved from the configuration directory.\n"
@@ -464,9 +555,9 @@ def initialize(
         try:
             env_file = input().strip()
         except EOFError:
-            return defer_setup(detection)
+            return defer_setup(detection, skip_proxy=skip_proxy)
     if not str(env_file).strip():
-        return defer_setup(detection)
+        return defer_setup(detection, skip_proxy=skip_proxy)
     selected = Path(env_file).expanduser()
     if not selected.is_absolute():
         selected = path.parent / selected
@@ -494,7 +585,7 @@ def initialize(
             cookie = sys.stdin.read(64002).removesuffix("\n").removesuffix("\r")
         else:
             if not sys.stdin.isatty():
-                return defer_setup(detection)
+                return defer_setup(detection, skip_proxy=skip_proxy)
             print(
                 f"Configuration file: {path}\n"
                 f"Your selected Cookie file: {selected}\n\n" + COOKIE_SETUP_HELP,
@@ -505,14 +596,14 @@ def initialize(
                 try:
                     cookie = getpass.getpass("Paste your X Cookie (input hidden): ")
                 except EOFError:
-                    return defer_setup(detection)
+                    return defer_setup(detection, skip_proxy=skip_proxy)
                 except getpass.GetPassWarning:
                     raise ConfigError(
                         "The terminal cannot hide input; initialization was cancelled "
                         "without writing credentials."
                     ) from None
             if not cookie.strip():
-                return defer_setup(detection)
+                return defer_setup(detection, skip_proxy=skip_proxy)
         parse_cookie(cookie)
         updated = with_cookie(existing_env if existing_env is not None else "X_PROXY=''\n", cookie)
         # Validate preserved proxy as well before writing anything.
@@ -569,7 +660,11 @@ def initialize(
             "This setup did not test online authentication or Grok access.",
             file=sys.stderr,
         )
-    if not cookie_stdin or proxy_status in {"skipped", "detection_unavailable"}:
+    if not cookie_stdin or proxy_status in {
+        "skipped",
+        "confirmation_required",
+        "detection_unavailable",
+    }:
         setup_file_guide(detection, proxy_status)
     return {
         "ok": True,
@@ -577,6 +672,7 @@ def initialize(
         "cookie_configured": True,
         "cookie_persistence": "env_file",
         "proxy_setup": proxy_status,
+        "proxy_detection": detection.public(),
         "proxy_configured": bool(parse_proxy(parse_env(updated).get("X_PROXY"))),
         "network_checked": False,
     }

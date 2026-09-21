@@ -33,28 +33,44 @@ Only `provider=x-web` is supported.
    values represent a previous choice and can be reused without asking again.
    Explain how to get the Cookie: sign in to X, open Developer Tools Network,
    reload, select an `x.com/i/api/` request, and copy Headers > Request Headers >
-   Cookie (value only, including `auth_token` and `ct0`). Console `document.cookie`
+   Cookie (the entire value, without filtering individual cookie pairs).
+   `auth_token` and `ct0` are validation requirements, not instructions to extract
+   only two values. Console `document.cookie`
    cannot read HttpOnly login cookies. Never pass Cookie values as command-line
    arguments or read and print the credentials file. Replacing an existing Cookie
    requires `init --replace-cookie`. Run `check` only after setup completes; it
    validates local files and dependencies, not online authentication or Grok access.
 4. During installation, run `detect-proxy` to inspect system/environment proxy
-   settings without loading credentials or making network requests. If a proxy is
+   settings without loading credentials or making network requests. On macOS,
+   use host-level execution for the initial read when the tool supports it;
+   a sandboxed process may be unable to see System Configuration. Obtain the
+   execution permission through the tool's normal permission mechanism before
+   that initial call, not by retrying after a specified task has failed. If a proxy is
    detected and no existing `X_PROXY` is configured, ask whether the user wants to
    apply it. Display only the sanitized address from the command. Never interpret
    no answer as consent. Apply it only after an affirmative answer using
    `init --use-system-proxy` with the user's chosen file/configuration. If no proxy
-   is detected, do not ask a proxy question. A detection error means detection
-   failed, not that there is no proxy; report it and do not switch detection tools
-   or change settings on your own. Preserve an existing explicit `X_PROXY` unless
+   is reliably reported (`not_detected`), do not ask a proxy question.
+   `detection_unavailable` means the current environment could not reliably read
+   system settings. A sandbox can hide them; never describe this as "no system
+   proxy". Stop the specified installation task on a detection error, report the
+   result, and provide the command for the user to run in their own terminal.
+   Do not retry with different permissions/tools or change settings without the
+   user's authorization. Preserve an existing explicit `X_PROXY` unless
    the user asks to replace it. Use `init --skip-proxy` if the user skips this step.
    If the Cookie path or input remains unavailable, finish independent installation
    work and include the proxy instructions in the final response instead of
    attempting to save settings. A confirmed proxy still requires a chosen file.
+   Non-interactive `init` returns `proxy_setup: confirmation_required` when a proxy
+   was detected but no decision was supplied. Ask the user in the conversation;
+   do not treat this as consent, a deliberate skip, or completed proxy setup.
+   Reusing an existing Cookie and passing offline `check` do not replace this step.
 5. End installation with the actual Cookie/proxy setup status and the full
    [file format](references/configuration.md#credentials-file-format), including
    `X_COOKIE` and `X_PROXY`, required Cookie keys, quoting, and the JSON `envFile`
-   mapping. Use placeholders for secrets, never the actual file contents. If the
+   mapping. Use `X_COOKIE='your-cookies...'` or `X_COOKIE=''` in examples, never a
+   partial Cookie header or the actual file contents. Tell the user to paste the
+   entire Cookie request-header value, retaining every cookie pair. If the
    proxy step was skipped or unanswered, explain how to add `X_PROXY` later or
    rerun `init --use-system-proxy`. Explain that an empty proxy means direct
    connection, which may not work on the user's network. Do not reduce the final

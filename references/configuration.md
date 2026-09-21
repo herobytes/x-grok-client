@@ -106,17 +106,20 @@ cannot hide input, setup stops rather than echoing the Cookie.
 ## System proxy setup
 
 `init` detects proxies locally before configuration. It uses Python's system
-proxy discovery: environment variables first, then native macOS System
-Configuration or Windows Internet Settings when proxy environment settings are
-absent. Linux uses proxy environment variables. HTTPS, ALL, HTTP, and SOCKS proxy
+proxy discovery: usable environment proxy entries first, then native macOS
+settings (`scutil --proxy`) or Windows Internet Settings. An environment containing
+only `NO_PROXY` does not suppress native discovery. Linux uses proxy environment
+variables. HTTPS, ALL, HTTP, and SOCKS proxy
 entries are considered in that order because the X endpoints use HTTPS. Plain
 host/port entries are normalized to proxy URLs. PAC scripts, WPAD, and
 desktop-specific Linux proxy settings are not evaluated.
 
 If a supported proxy is detected and `X_PROXY` is empty or absent, interactive
 setup asks whether to apply it. Only `y` or `yes` applies it; no, blank input,
-end-of-input, or non-interactive execution skips it. No detected proxy means no
-question. An existing explicit `X_PROXY` is retained without a replacement prompt.
+or end-of-input skips it. Non-interactive execution returns `confirmation_required`
+instead of implying that the user skipped the question. The installing agent must
+ask in the conversation. Only a reliable `not_detected` result means no question.
+An existing explicit `X_PROXY` is retained without a replacement prompt.
 
 Use these options for an already confirmed installation choice:
 
@@ -130,8 +133,17 @@ Use these options for an already confirmed installation choice:
   Proxy usernames and passwords are withheld. A detection error returns
   `detection_unavailable`, not a claim that the machine has no proxy.
 
+On macOS, a sandbox may make `scutil --proxy` return an empty dictionary while
+exiting successfully. This is classified as `detection_unavailable` with reason
+`system_settings_unreadable`. Nonzero exit codes, timeouts, and unsupported native
+settings also fail detection. PAC-only configuration requires manual setup.
+Do not report these outcomes as "no system proxy" or bypass the failure with
+another tool. Report the result and have the user run `detect-proxy` in their own
+terminal. A detected candidate is not consent to apply it.
+
 The `init` JSON result includes `proxy_setup` (`applied`, `existing`, `skipped`,
-`not_detected`, or `detection_unavailable`). Completed Cookie setup also reports
+`confirmation_required`, `not_detected`, or `detection_unavailable`) and sanitized
+`proxy_detection` metadata (status, source, reason, and candidate). Completed Cookie setup also reports
 `proxy_configured`. These statuses describe local configuration, not connectivity.
 In `--cookie-stdin` mode, proxy questions never consume Cookie input: use an
 explicit proxy choice if desired. When setup is deferred before saving, no proxy
@@ -168,7 +180,7 @@ credentials location is selected on your behalf. When ready:
 2. Use a local text editor to create a UTF-8 dotenv file there:
 
    ```dotenv
-   X_COOKIE='auth_token=YOUR_AUTH_TOKEN; ct0=YOUR_CT0; other_cookie=value'
+   X_COOKIE='your-cookies...'
    X_PROXY=''
    ```
 
@@ -217,13 +229,14 @@ Use UTF-8 dotenv, not JSON or a raw Cookie header. The file extension is arbitra
 `X_COOKIE` and `X_PROXY`:
 
 ```dotenv
-X_COOKIE='auth_token=YOUR_AUTH_TOKEN; ct0=YOUR_CT0; other_cookie=value'
+X_COOKIE='your-cookies...'
 X_PROXY=''
 ```
 
-`X_COOKIE` is required and must contain the actual full request Cookie value,
-including non-empty `auth_token` and `ct0`. The values above are placeholders;
-replace them locally, not in chat. Omit the `Cookie:` prefix and keep the value on
+`X_COOKIE` is required: replace `your-cookies...` with the **entire** copied Cookie
+request-header value, retaining every cookie pair. Do not extract only `auth_token`
+and `ct0`; they are required validation keys, not a two-field template. Replace
+the placeholder locally, not in chat. Omit the `Cookie:` prefix and keep the value on
 one line. `X_PROXY` is optional; empty means a direct connection. These variables
 belong only in the selected Cookie file; `config.json` contains the three metadata
 fields shown above. Never put a Cookie or proxy password in configuration JSON.

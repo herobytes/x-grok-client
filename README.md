@@ -46,7 +46,7 @@ If you already know the path, specify it directly (replace the example with your
 
 ### Choose whether to use your system proxy
 
-During `init`, the client checks local system/environment proxy settings. If it detects a supported proxy and your file has no `X_PROXY`, it asks **whether to use that proxy**. Enter `y` to save it. Press Enter, answer `n`, or use `--skip-proxy` to skip; the final instructions explain how to configure it later. No detected proxy means no proxy question. An existing explicit `X_PROXY` is preserved.
+During `init`, the client checks local system/environment proxy settings. If it detects a supported proxy and your file has no `X_PROXY`, it asks **whether to use that proxy**. Enter `y` to save it. Press Enter, answer `n`, or use `--skip-proxy` to skip; the final instructions explain how to configure it later. A reliable `not_detected` result means no proxy question. An existing explicit `X_PROXY` is preserved. When run without an interactive terminal, a detected proxy returns `confirmation_required` so the installing agent must ask you in the conversation.
 
 For an agent-assisted installation, the agent checks first and asks you before applying a detected proxy. No answer means it is not applied. These commands inspect settings or apply them after you have chosen to do so:
 
@@ -55,21 +55,21 @@ For an agent-assisted installation, the agent checks first and asks you before a
 .venv/bin/python scripts/grok_client.py init --env-file /absolute/path/you/choose/cookies.env --use-system-proxy
 ```
 
-Detection makes no network requests and does not prove that the proxy works. It reads proxy environment variables and, when those are absent, native settings on macOS and Windows. Linux desktop-specific settings and PAC scripts are not evaluated. Runtime requests still use only the saved `X_PROXY`; an empty value means direct connection. The client never silently switches to a system proxy after a network error.
+Detection makes no network requests and does not prove that the proxy works. It reads usable proxy environment settings first, then native settings on macOS and Windows. `NO_PROXY` alone does not hide the native proxy. On macOS, empty or unreadable system settings return `detection_unavailable`: a sandbox may hide settings, so this result does **not** mean the computer has no proxy. Run `detect-proxy` in your own terminal if the installing agent cannot read them. Linux desktop-specific settings and PAC scripts are not evaluated. Runtime requests still use only the saved `X_PROXY`; an empty value means direct connection. The client never silently switches to a system proxy after a network error.
 
 ### Cookie file format
 
 Save a **UTF-8 dotenv file**, with one variable per line, at your chosen path. The extension does not matter; a name such as `.x-cookies` works. This is a template, not a real Cookie:
 
 ```dotenv
-# Required: full Cookie request-header value; auth_token and ct0 must be present.
-X_COOKIE='auth_token=YOUR_AUTH_TOKEN; ct0=YOUR_CT0; other_cookie=value'
+# Required: paste the ENTIRE Cookie request-header value here.
+X_COOKIE='your-cookies...'
 
 # Optional: your actual proxy URL. Use X_PROXY='' for direct connection.
 X_PROXY='http://127.0.0.1:10808'
 ```
 
-The proxy above is an example, not a default. Keep both variable names exactly as shown. Keep the Cookie on one line, without the `Cookie:` prefix. Use dotenv quotes; within single quotes, escape embedded single quotes as `\'` and backslashes as `\\`. On macOS/Linux, set file permissions to `0600`. See [configuration](references/configuration.md#credentials-file-format) for accepted proxy schemes and the `config.json` format. Setup prints this format again when it finishes, including when a step is deferred.
+Replace `your-cookies...` with the **entire** copied Cookie header value, retaining every cookie pair. Do not extract just `auth_token` and `ct0`; the client checks for those keys but the example is not a two-cookie recipe. The proxy above is an example, not a default. Keep both variable names exactly as shown. Keep the Cookie on one line, without the `Cookie:` prefix. Use dotenv quotes; within single quotes, escape embedded single quotes as `\'` and backslashes as `\\`. On macOS/Linux, set file permissions to `0600`. See [configuration](references/configuration.md#credentials-file-format) for accepted proxy schemes and the `config.json` format. Setup prints this format again when it finishes, including when a step is deferred.
 
 ### Get your X Cookie
 
