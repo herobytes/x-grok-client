@@ -51,7 +51,8 @@ Replace the example with your own path. The JSON configuration still defaults to
 `init`. This default applies only to configuration metadata, not credentials.
 
 - **Existing valid Cookie file:** `init` validates it and saves its path in a new
-  configuration without rewriting the Cookie file or prompting for the value.
+  configuration without asking for the Cookie value. It rewrites the file only
+  when the user explicitly accepts a detected proxy that needs saving.
 - **New or empty Cookie file:** `init` explains how to obtain the Cookie and asks
   for hidden input. Valid input is saved only at the selected path.
 - **No path or no answer:** leaving the path blank, reaching end-of-input, or
@@ -78,8 +79,9 @@ Hidden terminal input does not echo characters; press Enter after pasting.
 New files written by `init` use mode `0600`; newly created leaf directories use
 mode `0700` on POSIX systems. Existing directory and linked-file permissions are
 not changed. Check permissions yourself when linking a manually created file.
-The first configuration uses model `grok-4-auto`. Existing configuration, proxy,
-and other dotenv entries are preserved. To explicitly replace an existing Cookie:
+The first configuration uses model `grok-4-auto`. Existing configuration and other
+dotenv entries are preserved. An existing proxy is replaced only with explicit
+`--use-system-proxy`. To explicitly replace an existing Cookie:
 
 ```bash
 .venv/bin/python scripts/grok_client.py init --replace-cookie
@@ -92,13 +94,70 @@ ignored or allowed to overwrite it.
 After setup returns `cookie_configured: true`, run `check` with the same `--config`
 selection. Neither `init` nor `check` verifies online authentication. Invalid input
 is rejected before creating configuration or credentials files. Instructions go
-to stderr; the result on stdout remains JSON.
+to stderr; the result on stdout remains JSON. Interactive setup ends with the
+complete Cookie and configuration file formats using synthetic placeholders.
 
 For a trusted local program piping a Cookie into `init --cookie-stdin`, select the
 file with `--env-file` or an existing configuration. Without either, setup is
 deferred without consuming stdin. Do not pass literal credentials through `echo`,
 shell arguments, heredocs, or recorded tool calls. If an interactive terminal
 cannot hide input, setup stops rather than echoing the Cookie.
+
+## System proxy setup
+
+`init` detects proxies locally before configuration. It uses Python's system
+proxy discovery: environment variables first, then native macOS System
+Configuration or Windows Internet Settings when proxy environment settings are
+absent. Linux uses proxy environment variables. HTTPS, ALL, HTTP, and SOCKS proxy
+entries are considered in that order because the X endpoints use HTTPS. Plain
+host/port entries are normalized to proxy URLs. PAC scripts, WPAD, and
+desktop-specific Linux proxy settings are not evaluated.
+
+If a supported proxy is detected and `X_PROXY` is empty or absent, interactive
+setup asks whether to apply it. Only `y` or `yes` applies it; no, blank input,
+end-of-input, or non-interactive execution skips it. No detected proxy means no
+question. An existing explicit `X_PROXY` is retained without a replacement prompt.
+
+Use these options for an already confirmed installation choice:
+
+- `init --use-system-proxy` explicitly saves the currently detected proxy,
+  including replacing an existing `X_PROXY`. It fails if no supported proxy is
+  detected. Select the Cookie file via `--env-file` or an existing configuration.
+- `init --skip-proxy` skips the question, preserves existing proxy settings, and
+  prints follow-up guidance when a detected proxy was not applied.
+- `detect-proxy` reports a sanitized candidate and detection status as JSON. It
+  needs no configuration or Cookie file and does not write files or access X.
+  Proxy usernames and passwords are withheld. A detection error returns
+  `detection_unavailable`, not a claim that the machine has no proxy.
+
+The `init` JSON result includes `proxy_setup` (`applied`, `existing`, `skipped`,
+`not_detected`, or `detection_unavailable`). Completed Cookie setup also reports
+`proxy_configured`. These statuses describe local configuration, not connectivity.
+In `--cookie-stdin` mode, proxy questions never consume Cookie input: use an
+explicit proxy choice if desired. When setup is deferred before saving, no proxy
+is persisted, even if `--use-system-proxy` was supplied.
+
+### Finish a skipped proxy step
+
+The final guidance includes the detected address with credentials redacted, the
+complete dotenv format, and the command to apply the system proxy later:
+
+```bash
+.venv/bin/python scripts/grok_client.py init --env-file /absolute/path/you/choose/cookies.env --use-system-proxy
+```
+
+Alternatively, edit **`X_PROXY` in the same file as `X_COOKIE`**, using your actual
+proxy URL. For example, `X_PROXY='http://127.0.0.1:10808'`. This example address is
+not automatically selected. Leave `X_PROXY=''` only when you want direct
+connections. A system-wide proxy does not redirect this client's traffic by
+itself: runtime HTTP clients continue to use `trust_env=False` and the saved
+explicit `X_PROXY` for both authenticated requests and transaction ID bootstrap.
+Environment bypass lists are not imported into this explicit setting.
+
+Run the offline `check` afterward. An explicitly requested `check-transaction`
+performs an anonymous network probe without sending account cookies; a successful
+probe does not verify authenticated Grok access. Network errors do not trigger
+an automatic switch of proxy, account, or service.
 
 ## Finish Cookie setup later
 
@@ -109,7 +168,7 @@ credentials location is selected on your behalf. When ready:
 2. Use a local text editor to create a UTF-8 dotenv file there:
 
    ```dotenv
-   X_COOKIE='PASTE_YOUR_COOKIE_HERE'
+   X_COOKIE='auth_token=YOUR_AUTH_TOKEN; ct0=YOUR_CT0; other_cookie=value'
    X_PROXY=''
    ```
 
@@ -151,15 +210,28 @@ interpolation is disabled, including `${...}` substitution.
 access or a list of supported models. The configured value is passed unchanged;
 there is no automatic model fallback.
 
-The dotenv template is:
+## Credentials file format
+
+Use UTF-8 dotenv, not JSON or a raw Cookie header. The file extension is arbitrary
+(for example, `.env` or `.x-cookies`). Use one variable per line, exactly named
+`X_COOKIE` and `X_PROXY`:
 
 ```dotenv
-X_COOKIE=''
+X_COOKIE='auth_token=YOUR_AUTH_TOKEN; ct0=YOUR_CT0; other_cookie=value'
 X_PROXY=''
 ```
 
+`X_COOKIE` is required and must contain the actual full request Cookie value,
+including non-empty `auth_token` and `ct0`. The values above are placeholders;
+replace them locally, not in chat. Omit the `Cookie:` prefix and keep the value on
+one line. `X_PROXY` is optional; empty means a direct connection. These variables
+belong only in the selected Cookie file; `config.json` contains the three metadata
+fields shown above. Never put a Cookie or proxy password in configuration JSON.
+
 Use `init` with your chosen file path to populate `X_COOKIE`. If editing manually, follow dotenv quoting and
-escaping rules. `X_PROXY` accepts HTTP, HTTPS, SOCKS5, or SOCKS5H URLs. For example:
+escaping rules: keep surrounding single quotes, escape embedded single quotes as
+`\'` and backslashes as `\\`. Use mode `0600` for the file on macOS/Linux.
+`X_PROXY` accepts HTTP, HTTPS, SOCKS5, or SOCKS5H URLs. For example:
 
 ```dotenv
 X_PROXY='socks5h://127.0.0.1:7890'

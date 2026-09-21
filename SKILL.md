@@ -38,12 +38,33 @@ Only `provider=x-web` is supported.
    arguments or read and print the credentials file. Replacing an existing Cookie
    requires `init --replace-cookie`. Run `check` only after setup completes; it
    validates local files and dependencies, not online authentication or Grok access.
-4. Use `ask` for questions or `describe` for an explicit X post URL. `ask` creates
+4. During installation, run `detect-proxy` to inspect system/environment proxy
+   settings without loading credentials or making network requests. If a proxy is
+   detected and no existing `X_PROXY` is configured, ask whether the user wants to
+   apply it. Display only the sanitized address from the command. Never interpret
+   no answer as consent. Apply it only after an affirmative answer using
+   `init --use-system-proxy` with the user's chosen file/configuration. If no proxy
+   is detected, do not ask a proxy question. A detection error means detection
+   failed, not that there is no proxy; report it and do not switch detection tools
+   or change settings on your own. Preserve an existing explicit `X_PROXY` unless
+   the user asks to replace it. Use `init --skip-proxy` if the user skips this step.
+   If the Cookie path or input remains unavailable, finish independent installation
+   work and include the proxy instructions in the final response instead of
+   attempting to save settings. A confirmed proxy still requires a chosen file.
+5. End installation with the actual Cookie/proxy setup status and the full
+   [file format](references/configuration.md#credentials-file-format), including
+   `X_COOKIE` and `X_PROXY`, required Cookie keys, quoting, and the JSON `envFile`
+   mapping. Use placeholders for secrets, never the actual file contents. If the
+   proxy step was skipped or unanswered, explain how to add `X_PROXY` later or
+   rerun `init --use-system-proxy`. Explain that an empty proxy means direct
+   connection, which may not work on the user's network. Do not reduce the final
+   guidance to a single sentence or only a link to documentation.
+6. Use `ask` for questions or `describe` for an explicit X post URL. `ask` creates
    a retained conversation unless a previous `conversation_id` is provided. The
    client does not post or reply. In a dedicated environment, the CLI checks
    XClientTransaction once per day before an actual request; see
    [dependency maintenance](references/dependency-maintenance.md).
-5. Report the returned result accurately. Post and media descriptions are model
+7. Report the returned result accurately. Post and media descriptions are model
    interpretations. `structured=false` means the summary fell back to plain text.
    Stop on errors; do not automatically replay authenticated requests or create
    another conversation.
