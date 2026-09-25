@@ -5,26 +5,6 @@ The distribution is named `XClientTransaction`; its Python module is
 `ask` and `describe` in managed environments. It does not wait for a transaction
 ID failure before checking.
 
-## Repository updates
-
-Dependabot checks only XClientTransaction every day at 09:00 Asia/Shanghai,
-including weekends, with at most one open version-update PR. GitHub may delay
-scheduled jobs. The merge workflow automatically squash-merges stable version
-increases, including major versions, when the PR is authored by Dependabot on a
-branch in this repository and changes only the XClientTransaction requirement
-line in `requirements.txt`.
-
-The workflow uses API metadata and binds the merge to the inspected commit. It
-does not check out PR code, run compatibility tests, approve unrelated updates,
-or bypass branch protection. Conflicts and unmet protection requirements stop
-the merge and require attention. Maintainers can rerun the workflow or use its
-manual dispatch to process an existing eligible PR.
-
-Repository updates raise the minimum version for future installations. They do
-not update an existing virtual environment. CLI maintenance below independently
-checks the latest compatible stable wheel before actual use in a managed
-environment and validates it before installation.
-
 ## Update policy
 
 1. Use the local calendar date. After one successful check that day, skip further
