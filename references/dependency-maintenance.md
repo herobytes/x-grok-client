@@ -72,6 +72,51 @@ imports of `GrokClient` do not trigger maintenance or take the runtime lock.
 Applications using that interface must coordinate maintenance separately, before
 starting processes that import the dependency.
 
+## Repair after a transaction ID error
+
+For CLI `ask` and `describe`, `transaction_id_error` triggers one immediate repair
+of XClientTransaction in the same managed environment. This bypasses the daily
+success cache and one-hour failure interval for this recovery attempt, but never
+bypasses invalid state, interrupted installation, or failed rollback protection.
+The runtime lock remains held through repair and the retry.
+
+The updater downloads the latest compatible stable wheel, stages and probes it,
+and keeps a rollback wheel before installation. If the installed version is
+already the latest, repair validates and reinstalls that version once. It never
+downgrades a newer installed version. Other packages are not upgraded. Failed
+validation or installation stops recovery; rollback is attempted if necessary.
+
+After a successful repair, the CLI uses the same Python executable in a fresh
+subprocess so previously imported package code is not reused. The original prompt
+is transferred over stdin, not command-line arguments. The original account,
+model, configuration, and refreshed credentials are checked before the retry;
+external configuration or credential changes stop it. For `describe`, the same
+post URL and summary parsing are preserved.
+
+Transaction IDs are generated before sending each authenticated request. If the
+error occurred before conversation creation, the retry creates the conversation.
+If creation already succeeded, its ID is carried forward, so only the unsent
+answer request is attempted. The child performs no maintenance or recovery loop.
+An update failure or any error on the single retry becomes
+`transaction_recovery_failed`. Do not start another agent-level repair afterward.
+
+TLS/proxy failures (`transaction_network_error`), HTTP 401/403/429, malformed
+responses, and timeouts do not trigger package repair or request replay. There is
+no static transaction ID fallback. Direct Python imports do not perform this
+automatic recovery.
+
+For a standalone `check-transaction` failure specifically classified as
+`transaction_id_error`, the skill runs one explicit repair using the same Python
+and configuration, then retries the probe once only if repair succeeded:
+
+```bash
+.venv/bin/python scripts/update_transaction.py --config /path/to/config.json --repair
+.venv/bin/python scripts/grok_client.py --config /path/to/config.json check-transaction
+```
+
+Run the second command only when the first exits successfully. Probes themselves
+never trigger repair, including the probes used internally by the updater.
+
 ## Manual commands
 
 Check the daily maintenance policy without asking a question:
@@ -118,5 +163,7 @@ Raw pip output and authenticated proxy URLs are not printed.
 
 An invalid state file also blocks maintenance. Inspect and repair the environment
 before correcting its state; do not delete records to force repeated updates.
-HTTP 401/403/429, network failures, and transaction ID errors never insert an extra
-emergency upgrade or replay a potentially completed Grok request.
+HTTP 401/403/429 and network failures never trigger an extra upgrade or replay a
+potentially completed Grok request. `transaction_id_error` has the single bounded
+repair exception described above. Recovery emits `transaction_repair` and
+`transaction_retry` JSON events on stderr; normal result JSON remains on stdout.

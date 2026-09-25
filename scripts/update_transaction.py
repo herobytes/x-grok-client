@@ -99,7 +99,7 @@ def wheel_version(wheel: Path) -> str:
     return value
 
 
-def maintain_locked(config: Path) -> dict:
+def maintain_locked(config: Path, *, force=False) -> dict:
     """Caller holds the environment lock, including during the following Grok call."""
     state = Path(sys.prefix) / STATE_NAME
     now = time.time()
@@ -119,10 +119,11 @@ def maintain_locked(config: Path) -> dict:
             raise MaintenanceError(
                 "The previous upgrade was interrupted or rollback failed; repair the dedicated environment before calling again."
             )
-        if previous.get("checked_day") == today:
+        if not force and previous.get("checked_day") == today:
             return {"ok": True, "usable": True, "status": "already_checked"}
         if (
-            previous.get("status") not in {"up_to_date", "updated"}
+            not force
+            and previous.get("status") not in {"up_to_date", "updated"}
             and now - attempted < RETRY_SECONDS
         ):
             return {
@@ -160,7 +161,7 @@ def maintain_locked(config: Path) -> dict:
         try:
             candidate = download(PACKAGE_SPEC, root / "candidate")
             new = wheel_version(candidate)
-            if Version(new) <= Version(old):
+            if Version(new) < Version(old) or (Version(new) == Version(old) and not force):
                 return finish("up_to_date", success=True, new=old)
             pip("check")
             trial = root / "trial"
@@ -197,13 +198,13 @@ def maintain_locked(config: Path) -> dict:
 
 
 @contextmanager
-def runtime_maintenance(config: Path):
+def runtime_maintenance(config: Path, *, force=False):
     if not managed_environment():
         yield {"ok": True, "usable": True, "status": "unmanaged_environment"}
         return
     try:
         with FileLock(str(Path(sys.prefix) / ".x-grok-runtime.lock"), timeout=0, mode=0o600):
-            result = maintain_locked(config)
+            result = maintain_locked(config, force=force)
             if not result["usable"]:
                 raise MaintenanceError(
                     "Dependency rollback failed; Grok calls have stopped. Repair the dedicated environment."
@@ -215,21 +216,42 @@ def runtime_maintenance(config: Path):
         ) from None
 
 
-def update(config: Path) -> dict:
+def update(config: Path, *, force=False) -> dict:
     if not managed_environment():
         raise MaintenanceError(
             "Automatic updates require the project .venv or ~/.local/share/x-grok-client/.venv."
         )
-    with runtime_maintenance(config) as result:
+    with runtime_maintenance(config, force=force) as result:
         return result
+
+
+def repair_locked(config: Path) -> dict:
+    """Force one validated repair while the CLI still holds its environment lock."""
+    if not managed_environment():
+        raise MaintenanceError(
+            "Transaction ID repair requires the project .venv or "
+            "~/.local/share/x-grok-client/.venv; no other environment was modified."
+        )
+    result = maintain_locked(config, force=True)
+    print(json.dumps({"event": "transaction_repair", **result}), file=sys.stderr)
+    if not result.get("ok") or not result.get("usable"):
+        raise MaintenanceError(
+            "Transaction ID dependency repair failed; the request was not retried."
+        )
+    return result
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default=str(DEFAULT_CONFIG))
+    parser.add_argument(
+        "--repair",
+        action="store_true",
+        help="Force a validated XClientTransaction update after a transaction_id_error",
+    )
     args = parser.parse_args()
     try:
-        result = update(Path(args.config).expanduser().resolve())
+        result = update(Path(args.config).expanduser().resolve(), force=args.repair)
     except MaintenanceError as exc:
         result = {"ok": False, "error": "maintenance_failed", "message": str(exc)}
     except Exception:

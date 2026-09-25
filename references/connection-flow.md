@@ -44,14 +44,20 @@ configuration, authenticated requests, response parsing, and cookie persistence.
 - Authenticated requests are never replayed automatically. A network error can
   occur after a conversation has already been created.
 - A stale cached transaction generator can be rebuilt once anonymously. This
-  does not replay an authenticated request or trigger an emergency package update.
+  does not replay an authenticated request. If generation still raises
+  `transaction_id_error`, CLI `ask`/`describe` force one validated dependency update
+  under the environment lock, then resume the unsent request in a fresh process.
+  An already created conversation ID is preserved. A second error stops recovery.
 - HTTP read timeouts are 60 seconds for conversation creation and 120 seconds for
   answers. A combined asynchronous timeout of 180 seconds covers `ask`; responses
   are limited to 8 MiB.
 - Synchronous bootstrap requests have a 30-second timeout each. Cancelling an
   awaiting coroutine does not immediately terminate an in-progress worker thread.
 - Dependency maintenance precedes the request and has its own subprocess timeouts;
-  its duration is not included in the 180-second `ask` budget.
+  its duration is not included in the 180-second `ask` budget. A transaction repair
+  runs after the failed attempt finishes; its single retry has a new 180-second
+  `ask` budget and a 210-second subprocess timeout. No package installation runs
+  in an abandoned asynchronous worker thread.
 - Cookie writes use atomic replacement, a process lock, and source-file snapshots.
   A conflict or write failure stops the call without overwriting newer credentials.
 
@@ -84,6 +90,7 @@ serialized. Independent instances reuse refreshed cookies through the credential
 file; conflicts require constructing a fresh client.
 
 Direct imports do not run CLI dependency maintenance or hold its environment lock.
+They also do not automatically repair transaction ID failures.
 Coordinate maintenance before starting long-lived application processes; do not
 replace a dependency while a process is still using its imported modules.
 

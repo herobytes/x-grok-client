@@ -99,6 +99,8 @@ The `check` command validates local configuration and dependencies only; it does
 
 Before the first `ask` or `describe` of the day, the CLI may download, validate, and update **XClientTransaction** inside a managed virtual environment. This can add startup time and make anonymous requests to X. See [dependency maintenance](references/dependency-maintenance.md) for the exact scope and failure behavior.
 
+If transaction ID generation fails with `transaction_id_error`, the CLI forces one validated XClientTransaction update in that same environment and retries once in a fresh process. It reuses an already created conversation and the original prompt. Failed updates or a failed retry stop with `transaction_recovery_failed`; network, login, and rate-limit errors do not trigger this repair.
+
 ## Usage
 
 ```bash

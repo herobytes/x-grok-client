@@ -82,8 +82,8 @@ Only `provider=x-web` is supported.
    [dependency maintenance](references/dependency-maintenance.md).
 7. Report the returned result accurately. Post and media descriptions are model
    interpretations. `structured=false` means the summary fell back to plain text.
-   Stop on errors; do not automatically replay authenticated requests or create
-   another conversation.
+   The CLI repairs `transaction_id_error` once as described below. Stop on other
+   errors; do not replay an authenticated request whose outcome is unknown.
 
 Replace `<python>` and `<skill-dir>` with actual absolute paths:
 
@@ -105,8 +105,21 @@ sent to `grok.x.com`; include only what the task needs.
 - HTTP 401/403: stop and check authentication, Grok access, or account restrictions.
 - HTTP 429, empty final text, malformed streams, and timeouts: stop and report.
   The remote operation may already have completed.
-- `transaction_id_error` or `transaction_network_error`: report the computation
-  or network failure. Do not add an emergency upgrade or use static IDs.
+- `transaction_id_error`: update XClientTransaction in the same managed Python
+  environment, then retry once. CLI `ask` and `describe` do this automatically:
+  force a validated update even if today's check already ran, then retry in a
+  fresh Python process using the same prompt, account, model, and any conversation
+  already created. Only the request blocked before sending by ID generation is
+  resumed. Do not add a second agent-level update/retry on top of the CLI.
+  `transaction_recovery_failed` means recovery stopped; report it without looping.
+- If a standalone `check-transaction` returns `transaction_id_error`, run the
+  same interpreter with `scripts/update_transaction.py --config <same-config> --repair`.
+  On success, retry that probe once in a fresh process; if update or retry fails,
+  stop. Use the project/skill `.venv` or `~/.local/share/x-grok-client/.venv`;
+  never silently update system Python or an unrelated environment.
+- `transaction_network_error` (including TLS/proxy failures), HTTP 401/403/429,
+  and malformed responses are not evidence of a stale transaction package.
+  Report them without triggering this repair. Never use static transaction IDs.
 - Credential conflicts or failed writes: stop. Another process may have updated
   the file, and the request may already have completed. Create a fresh client
   after resolving the issue instead of blindly retrying.

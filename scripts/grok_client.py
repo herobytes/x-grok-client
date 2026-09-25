@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import getpass
+import hashlib
 import json
 import os
 import re
@@ -83,6 +84,10 @@ class TransactionIdError(ProtocolError):
 
 class TransactionNetworkError(GrokError):
     code = "transaction_network_error"
+
+
+class TransactionRecoveryError(GrokError):
+    code = "transaction_recovery_failed"
 
 
 class EmptyError(GrokError):
@@ -854,6 +859,7 @@ class GrokClient:
         self.transaction_ids = TransactionIds(self.credentials.proxy)
         self.blocked = False
         self.lock = asyncio.Lock()
+        self.retry_conversation_id = None
 
     def _refresh_cookies(self, headers: list[str]):
         cookies = dict(self.credentials.cookies)
@@ -975,6 +981,7 @@ class GrokClient:
                 ) from None
 
     async def _ask(self, message: str, conversation_id: str | None) -> dict:
+        self.retry_conversation_id = conversation_id
         if conversation_id is None:
             raw = await self._request(CREATE_URL, {"variables": {}, "queryId": QUERY_ID})
             try:
@@ -993,6 +1000,7 @@ class GrokClient:
                 raise ProtocolError(
                     "Conversation creation returned no valid conversation_id; check the web protocol or account permissions."
                 ) from None
+        self.retry_conversation_id = conversation_id
         body = {
             "responses": [
                 {"message": message, "sender": 1, "promptSource": "", "fileAttachments": []}
@@ -1023,6 +1031,94 @@ class GrokClient:
             "tweet_url": url,
             **parse_summary(result["text"]),
         }
+
+
+def transaction_retry_worker() -> None:
+    """Private fresh-process entry point; prompts travel over stdin, not argv."""
+    try:
+        request = json.load(sys.stdin)
+        config = load_config(request["config_path"])
+        if [str(config.env_file), config.provider, config.model] != request["expected_config"]:
+            raise CredentialChangedError("Configuration changed before recovery.")
+        client = GrokClient(config)
+        digest = hashlib.sha256(client.cookie_store.source.encode("utf-8")).hexdigest()
+        if digest != request["credential_digest"]:
+            raise CredentialChangedError("Credentials changed before recovery.")
+        # Direct ask deliberately omits maintenance and any recovery loop.
+        result = asyncio.run(client.ask(request["message"], request["conversation_id"]))
+        if request["tweet_url"] is not None:
+            result = {
+                "conversation_id": result["conversation_id"],
+                "model": result["model"],
+                "tweet_url": request["tweet_url"],
+                **parse_summary(result["text"]),
+            }
+        output = {"ok": True, "result": result}
+    except GrokError as exc:
+        output = {"ok": False, "error": exc.code}
+    except Exception:
+        output = {"ok": False, "error": "unexpected_error"}
+    print(json.dumps(output, ensure_ascii=False))
+
+
+def recover_transaction_request(
+    client: GrokClient,
+    config_path: Path,
+    message: str,
+    *,
+    tweet_url: str | None = None,
+) -> dict:
+    """Update once, then resume the unsent request in a fresh Python process."""
+    from update_transaction import MaintenanceError, repair_locked
+
+    try:
+        repair_locked(config_path)
+    except MaintenanceError:
+        raise TransactionRecoveryError(
+            "XClientTransaction repair failed or the environment is not managed; "
+            "stopped without retrying the request."
+        ) from None
+    request = {
+        "config_path": str(config_path),
+        "expected_config": [
+            str(client.config.env_file),
+            client.config.provider,
+            client.config.model,
+        ],
+        "credential_digest": hashlib.sha256(client.cookie_store.source.encode("utf-8")).hexdigest(),
+        "message": message,
+        "conversation_id": client.retry_conversation_id,
+        "tweet_url": tweet_url,
+    }
+    print(json.dumps({"event": "transaction_retry", "attempt": 1}), file=sys.stderr)
+    code = (
+        "import sys;sys.path.insert(0,sys.argv[1]);"
+        "from grok_client import transaction_retry_worker;transaction_retry_worker()"
+    )
+    try:
+        process = subprocess.run(
+            [sys.executable, "-c", code, str(Path(__file__).resolve().parent)],
+            input=json.dumps(request),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=CALL_TIMEOUT_SECONDS + 30,
+        )
+        response = json.loads(process.stdout) if process.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        response = None
+    if not isinstance(response, dict):
+        raise TransactionRecoveryError(
+            "The single retry failed or timed out; stopped. The remote request may have completed."
+        )
+    if response.get("ok") is not True or not isinstance(response.get("result"), dict):
+        error = response.get("error", "unexpected_error")
+        if not isinstance(error, str) or not re.fullmatch(r"[a-z_]{1,64}", error):
+            error = "unexpected_error"
+        raise TransactionRecoveryError(
+            f"The single retry failed ({error}); no further retry attempted."
+        )
+    return response["result"]
 
 
 def main() -> int:
@@ -1163,11 +1259,24 @@ def main() -> int:
                             ),
                             file=sys.stderr,
                         )
-                    output = asyncio.run(
-                        client.ask(message, args.conversation_id)
-                        if args.command == "ask"
-                        else client.describe(args.tweet_url)
-                    )
+                    try:
+                        output = asyncio.run(
+                            client.ask(message, args.conversation_id)
+                            if args.command == "ask"
+                            else client.describe(args.tweet_url)
+                        )
+                    except TransactionIdError:
+                        url = (
+                            normalize_tweet_url(args.tweet_url)
+                            if args.command == "describe"
+                            else None
+                        )
+                        output = recover_transaction_request(
+                            client,
+                            config_path,
+                            f"{PROMPT}\n{url}" if url else message,
+                            tweet_url=url,
+                        )
             except MaintenanceError as exc:
                 raise GrokError(str(exc)) from None
         print(json.dumps(output, ensure_ascii=False, indent=2))
